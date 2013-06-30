@@ -378,7 +378,8 @@ class SignApk {
      * more efficient.
      */
     private static void copyFiles(Manifest manifest,
-                                  JarFile in, JarOutputStream out, long timestamp) throws IOException {
+
+        JarFile in, JarOutputStream out, long timestamp) throws IOException {
         byte[] buffer = new byte[4096];
         int num;
 
@@ -427,6 +428,7 @@ class SignApk {
             if (data.length < 2)
                 throw new IOException("Less than two bytes written to footer");
             write(data, 0, data.length - 2);
+
         }
 
         public byte[] getTail() {
@@ -475,9 +477,7 @@ class SignApk {
         private final ASN1ObjectIdentifier type;
         private WholeFileSignerOutputStream signer;
 
-        public CMSSigner(JarFile inputJar, File publicKeyFile,
-                         X509Certificate publicKey, PrivateKey privateKey,
-                         OutputStream outputStream) {
+        public CMSSigner(JarFile inputJar, File publicKeyFile, X509Certificate publicKey, PrivateKey privateKey, OutputStream outputStream) {
             this.inputJar = inputJar;
             this.publicKeyFile = publicKeyFile;
             this.publicKey = publicKey;
@@ -500,10 +500,7 @@ class SignApk {
                 JarOutputStream outputJar = new JarOutputStream(signer);
 
                 Manifest manifest = addDigestsToManifest(inputJar);
-                signFile(manifest, inputJar,
-                         new X509Certificate[]{ publicKey },
-                         new PrivateKey[]{ privateKey },
-                         outputJar);
+                signFile(manifest, inputJar, publicKeyFile, publicKey, privateKey, outputJar);
                 // Assume the certificate is valid for at least an hour.
                 long timestamp = publicKey.getNotBefore().getTime() + 3600L * 1000;
                 addOtacert(outputJar, publicKeyFile, timestamp, manifest);
@@ -517,11 +514,10 @@ class SignApk {
             }
         }
 
-        public void writeSignatureBlock(ByteArrayOutputStream temp)
-            throws IOException,
-                   CertificateEncodingException,
-                   OperatorCreationException,
-                   CMSException {
+        public void writeSignatureBlock(ByteArrayOutputStream temp) throws IOException,
+               CertificateEncodingException,
+               OperatorCreationException,
+               CMSException {
             SignApk.writeSignatureBlock(this, publicKey, privateKey, temp);
         }
 
@@ -530,11 +526,8 @@ class SignApk {
         }
     }
 
-    private static void signWholeFile(JarFile inputJar, File publicKeyFile,
-                                      X509Certificate publicKey, PrivateKey privateKey,
-                                      OutputStream outputStream) throws Exception {
-        CMSSigner cmsOut = new CMSSigner(inputJar, publicKeyFile,
-                                         publicKey, privateKey, outputStream);
+    public static void signWholeFile(JarFile inputJar, File publicKeyFile, X509Certificate publicKey, PrivateKey privateKey, OutputStream outputStream) throws Exception {
+        CMSSigner cmsOut = new CMSSigner(inputJar, publicKeyFile, publicKey, privateKey, outputStream);
 
         ByteArrayOutputStream temp = new ByteArrayOutputStream();
 
@@ -598,12 +591,9 @@ class SignApk {
         temp.writeTo(outputStream);
     }
 
-    private static void signFile(Manifest manifest, JarFile inputJar,
-                                 X509Certificate[] publicKey, PrivateKey[] privateKey,
-                                 JarOutputStream outputJar)
-        throws Exception {
+    public static void signFile(Manifest manifest, JarFile inputJar, File publicKeyFile, X509Certificate publicKey, PrivateKey privateKey, JarOutputStream outputJar) throws Exception {
         // Assume the certificate is valid for at least an hour.
-        long timestamp = publicKey[0].getNotBefore().getTime() + 3600L * 1000;
+        long timestamp = publicKey.getNotBefore().getTime() + 3600L * 1000;
 
         JarEntry je;
 
@@ -616,26 +606,21 @@ class SignApk {
         outputJar.putNextEntry(je);
         manifest.write(outputJar);
 
-        int numKeys = publicKey.length;
-        for (int k = 0; k < numKeys; ++k) {
-            // CERT.SF / CERT#.SF
-            je = new JarEntry(numKeys == 1 ? CERT_SF_NAME :
-                              (String.format(CERT_SF_MULTI_NAME, k)));
-            je.setTime(timestamp);
-            outputJar.putNextEntry(je);
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            writeSignatureFile(manifest, baos);
-            byte[] signedData = baos.toByteArray();
-            outputJar.write(signedData);
+        // CERT.SF
+        je = new JarEntry(CERT_SF_NAME);
+        je.setTime(timestamp);
+        outputJar.putNextEntry(je);
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        writeSignatureFile(manifest, baos);
+        byte[] signedData = baos.toByteArray();
+        outputJar.write(signedData);
 
-            // CERT.RSA / CERT#.RSA
-            je = new JarEntry(numKeys == 1 ? CERT_RSA_NAME :
-                              (String.format(CERT_RSA_MULTI_NAME, k)));
-            je.setTime(timestamp);
-            outputJar.putNextEntry(je);
-            writeSignatureBlock(new CMSProcessableByteArray(signedData),
-                                publicKey[k], privateKey[k], outputJar);
-        }
+        // CERT.RSA
+        je = new JarEntry(CERT_RSA_NAME);
+        je.setTime(timestamp);
+        outputJar.putNextEntry(je);
+        writeSignatureBlock(new CMSProcessableByteArray(signedData),
+                            publicKey, privateKey, outputJar);
     }
 
     private static void usage() {
@@ -673,33 +658,19 @@ class SignApk {
         FileOutputStream outputFile = null;
 
         try {
-            File firstPublicKeyFile = new File(args[argstart+0]);
 
-            X509Certificate[] publicKey = new X509Certificate[numKeys];
-            for (int i = 0; i < numKeys; ++i) {
-                int argNum = argstart + i*2;
-                publicKey[i] = readPublicKey(new File(args[argNum]));
-            }
+            File publicKeyFile = new File(args[argstart+0]);
+            X509Certificate publicKey = readPublicKey(publicKeyFile);
 
-            // Set the ZIP file timestamp to the starting valid time
-            // of the 0th certificate plus one hour (to match what
-            // we've historically done).
-            long timestamp = publicKey[0].getNotBefore().getTime() + 3600L * 1000;
+            PrivateKey privateKey = readPrivateKey(new File(args[argstart+1]));
+            inputJar = new JarFile(new File(args[argstart+2]), false);  // Don't verify.
 
-            PrivateKey[] privateKey = new PrivateKey[numKeys];
-            for (int i = 0; i < numKeys; ++i) {
-                int argNum = argstart + i*2 + 1;
-                privateKey[i] = readPrivateKey(new File(args[argNum]));
-            }
-            inputJar = new JarFile(new File(inputFilename), false);  // Don't verify.
-
-            outputFile = new FileOutputStream(outputFilename);
-
+            outputFile = new FileOutputStream(args[argstart+3]);
 
             if (signWholeFile) {
-                SignApk.signWholeFile(inputJar, firstPublicKeyFile,
-                                      publicKey[0], privateKey[0], outputFile);
-            } else {
+                SignApk.signWholeFile(inputJar, publicKeyFile, publicKey, privateKey, outputFile);
+            }
+            else {
                 JarOutputStream outputJar = new JarOutputStream(outputFile);
 
                 // For signing .apks, use the maximum compression to make
@@ -710,8 +681,7 @@ class SignApk {
                 // (~0.1% on full OTA packages I tested).
                 outputJar.setLevel(9);
 
-                signFile(addDigestsToManifest(inputJar), inputJar,
-                         publicKey, privateKey, outputJar);
+                signFile(addDigestsToManifest(inputJar), inputJar, publicKeyFile, publicKey, privateKey, outputJar);
                 outputJar.close();
             }
         } catch (Exception e) {
