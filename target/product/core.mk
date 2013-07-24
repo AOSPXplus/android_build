@@ -34,7 +34,6 @@ PRODUCT_PACKAGES += \
     VpnDialogs \
     abcc \
     atrace \
-<<<<<<< HEAD
     bouncycastle \
     bu \
     cacerts \
