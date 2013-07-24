@@ -803,11 +803,7 @@ function mm()
         elif [ ! "$M" ]; then
             echo "Couldn't locate a makefile from the current directory."
         else
-<<<<<<< HEAD
-            ONE_SHOT_MAKEFILE=$M $MM_MAKE -C $T all_modules $@
-=======
             ONE_SHOT_MAKEFILE=$M make -C $T -f build/core/main.mk all_modules $@
->>>>>>> goog/jb-mr2.0-release
         fi
     fi
 }
@@ -857,11 +853,7 @@ function mmm()
                 fi
             fi
         done
-<<<<<<< HEAD
-        ONE_SHOT_MAKEFILE="$MAKEFILE" $MMM_MAKE -C $T $DASH_ARGS $MODULES $ARGS
-=======
         ONE_SHOT_MAKEFILE="$MAKEFILE" make -C $T -f build/core/main.mk $DASH_ARGS $MODULES $ARGS
->>>>>>> goog/jb-mr2.0-release
     else
         echo "Couldn't locate the top of the tree.  Try setting TOP."
     fi

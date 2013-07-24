@@ -34,11 +34,8 @@ PRODUCT_PACKAGES := \
     LatinIME \
     Launcher2 \
     Music \
-<<<<<<< HEAD
-=======
     MusicFX \
     OneTimeInitializer \
->>>>>>> goog/jb-mr2.0-release
     Provision \
     Phone \
     QuickSearchBox \
