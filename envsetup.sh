@@ -1516,8 +1516,14 @@ function installrecovery()
     PARTITION=`grep "^\/recovery" $OUT/recovery/root/etc/recovery.fstab | awk {'print $3'}`
     if [ -z "$PARTITION" ];
     then
-        echo "Unable to determine recovery partition."
-        return 1
+        # Try for RECOVERY_FSTAB_VERSION = 2
+        PARTITION=`grep "[[:space:]]\/recovery[[:space:]]" $OUT/recovery/root/etc/recovery.fstab | awk {'print $1'}`
+        PARTITION_TYPE=`grep "[[:space:]]\/recovery[[:space:]]" $OUT/recovery/root/etc/recovery.fstab | awk {'print $3'}`
+        if [ -z "$PARTITION" ];
+        then
+            echo "Unable to determine recovery partition."
+            return 1
+        fi
     fi
     adb start-server
     adb root
@@ -1906,8 +1912,17 @@ function dopush()
 
     if (adb shell cat /system/build.prop | grep -q "ro.ax.device=$AX_BUILD");
     then
+    # retrieve IP and PORT info if we're using a TCP connection
+    TCPIPPORT=$(adb devices | egrep '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+[^0-9]+' \
+        | head -1 | awk '{print $1}')
     adb root &> /dev/null
     sleep 0.3
+    if [ -n "$TCPIPPORT" ]
+    then
+        # adb root just killed our connection
+        # so reconnect...
+        adb connect "$TCPIPPORT"
+    fi
     adb wait-for-device &> /dev/null
     sleep 0.3
     adb remount &> /dev/null
