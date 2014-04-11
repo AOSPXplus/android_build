@@ -34,6 +34,10 @@ ifneq ($(strip $(BUILD_HOST_static)),)
 HOST_GLOBAL_LDFLAGS += -static
 endif # BUILD_HOST_static
 
+# Workaround differences in inttypes.h between host and target.
+# See bug 12708004.
+HOST_GLOBAL_CFLAGS += -D__STDC_FORMAT_MACROS -D__STDC_CONSTANT_MACROS
+
 build_mac_version := $(shell sw_vers -productVersion)
 
 ifneq ($(strip $(BUILD_MAC_SDK_EXPERIMENTAL)),)
@@ -100,7 +104,7 @@ HOST_CXX := g++
 endif # $(HOST_TOOLCHAIN_PREFIX)-gcc exists
 HOST_AR := $(AR)
 HOST_STRIP := $(STRIP)
-HOST_STRIP_COMMAND = $(HOST_STRIP) --strip-debug $< -o $@
+HOST_STRIP_COMMAND = $(HOST_STRIP) --strip-all $< -o $@
 
 HOST_GLOBAL_CFLAGS += -isysroot $(mac_sdk_root) -mmacosx-version-min=$(mac_sdk_version) -DMACOSX_DEPLOYMENT_TARGET=$(mac_sdk_version)
 HOST_GLOBAL_LDFLAGS += -isysroot $(mac_sdk_root) -Wl,-syslibroot,$(mac_sdk_root) -mmacosx-version-min=$(mac_sdk_version)
@@ -166,3 +170,7 @@ else \
 stat -f "%z" $(1) ; \
 fi
 endef
+
+# gcc location for clang; to be updated when clang is updated
+# HOST_TOOLCHAIN_ROOT is a Darwin-specific define
+HOST_TOOLCHAIN_FOR_CLANG := $(HOST_TOOLCHAIN_ROOT)

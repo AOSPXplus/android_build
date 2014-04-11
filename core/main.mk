@@ -40,14 +40,12 @@ endif
 # Check for broken versions of make.
 # (Allow any version under Cygwin since we don't actually build the platform there.)
 ifeq (,$(findstring CYGWIN,$(shell uname -sm)))
-ifeq (0,$(shell expr $$(echo $(MAKE_VERSION) | sed "s/[^0-9\.].*//") = 3.81))
-ifeq (0,$(shell expr $$(echo $(MAKE_VERSION) | sed "s/[^0-9\.].*//") = 3.82))
+ifneq (1,$(strip $(shell expr $(MAKE_VERSION) \>= 3.81)))
 $(warning ********************************************************************************)
 $(warning *  You are using version $(MAKE_VERSION) of make.)
-$(warning *  Android is tested to build with versions 3.81 and 3.82.)
+$(warning *  Android can only be built by versions 3.81 and higher.)
 $(warning *  see https://source.android.com/source/download.html)
 $(warning ********************************************************************************)
-endif
 endif
 endif
 
@@ -93,6 +91,8 @@ include $(BUILD_SYSTEM)/help.mk
 # and host information.
 include $(BUILD_SYSTEM)/config.mk
 
+include $(BUILD_SYSTEM)/64_bit_blacklist.mk
+
 # This allows us to force a clean build - included after the config.mk
 # environment setup is done, but before we generate any dependencies.  This
 # file does the rm -rf inline so the deps which are all done below will
@@ -102,7 +102,7 @@ include $(BUILD_SYSTEM)/cleanbuild.mk
 # Include the google-specific config
 -include vendor/google/build/config.mk
 
-VERSION_CHECK_SEQUENCE_NUMBER := 3
+VERSION_CHECK_SEQUENCE_NUMBER := 5
 -include $(OUT_DIR)/versions_checked.mk
 ifneq ($(VERSION_CHECK_SEQUENCE_NUMBER),$(VERSIONS_CHECKED))
 
@@ -139,52 +139,91 @@ $(warning ************************************************************)
 $(error Directory names containing spaces not supported)
 endif
 
-# Check for the corrent jdk
-ifneq ($(shell java -version 2>&1 | grep -i openjdk),)
+java_version_str := $(shell unset _JAVA_OPTIONS && java -version 2>&1)
+javac_version_str := $(shell unset _JAVA_OPTIONS && javac -version 2>&1)
+
+# Check for the correct version of java, should be 1.7 by
+# default, and 1.6 if LEGACY_USE_JAVA6 is set.
+ifeq ($(LEGACY_USE_JAVA6),)
+required_version := "1.7.x"
+required_javac_version := "1.7"
+java_version := $(shell echo '$(java_version_str)' | grep '^java .*[ "]1\.7[\. "$$]')
+javac_version := $(shell echo '$(javac_version_str)' | grep '[ "]1\.7[\. "$$]')
+else # if LEGACY_USE_JAVA6
+required_version := "1.6.x"
+required_javac_version := "1.6"
+java_version := $(shell echo '$(java_version_str)' | grep '^java .*[ "]1\.6[\. "$$]')
+javac_version := $(shell echo '$(javac_version_str)' | grep '[ "]1\.6[\. "$$]')
+endif # if LEGACY_USE_JAVA6
+
+ifeq ($(strip $(java_version)),)
+$(info ************************************************************)
+$(info You are attempting to build with the incorrect version)
+$(info of java.)
+$(info $(space))
+$(info Your version is: $(java_version_str).)
+$(info The required version is: $(required_version))
+$(info $(space))
+$(info Please follow the machine setup instructions at)
+$(info $(space)$(space)$(space)$(space)https://source.android.com/source/initializing.html)
+$(info ************************************************************)
+endif
+
+# Check for the current JDK.
+#
+# For Java 1.7, we require OpenJDK on linux and Oracle JDK on Mac OS.
+# For Java 1.6, we require Oracle for all host OSes.
+requires_openjdk := false
+ifeq ($(LEGACY_USE_JAVA6),)
+ifeq ($(HOST_OS), linux)
+requires_openjdk := true
+endif
+endif
+
+
+# Check for the current jdk
+ifeq ($(requires_openjdk), true)
+# The user asked for java7 openjdk, so check that the host
+# java version is really openjdk
+ifeq ($(shell echo '$(java_version_str)' | grep -i openjdk),)
+$(info ************************************************************)
+$(info You are attempting to build with an unsupported JDK.)
+$(info $(space))
+$(info This build requires OpenJDK, but you are using:)
+$(info $(java_version_str).)
+$(info Please follow the machine setup instructions at)
+$(info $(space)$(space)$(space)$(space)https://source.android.com/source/download.html)
+$(info ************************************************************)
+$(error stop)
+endif # java version is not OpenJdk
+else # if requires_openjdk
+ifneq ($(shell echo '$(java_version_str)' | grep -i openjdk),)
 $(info ************************************************************)
 $(info You are attempting to build with an unsupported JDK.)
 $(info $(space))
 $(info You use OpenJDK but only Sun/Oracle JDK is supported.)
 $(info Please follow the machine setup instructions at)
 $(info $(space)$(space)$(space)$(space)https://source.android.com/source/download.html)
-$(info $(space))
-$(info Continue at your own peril!)
 $(info ************************************************************)
-endif
-
-# Check for the correct version of java
-java_version := $(shell java -version 2>&1 | head -n 1 | grep '^java .*[ "]1\.[67][\. "$$]')
-ifneq ($(shell java -version 2>&1 | grep -i openjdk),)
-java_version :=
-endif
-ifeq ($(strip $(java_version)),)
-$(info ************************************************************)
-$(info You are attempting to build with an unsupported version)
-$(info of java.)
-$(info $(space))
-$(info Your version is: $(shell java -version 2>&1 | head -n 1).)
-$(info The correct version is: Java SE 1.6 or 1.7.)
-$(info $(space))
-$(info Please follow the machine setup instructions at)
-$(info $(space)$(space)$(space)$(space)https://source.android.com/source/download.html)
-$(info ************************************************************)
-endif
+$(error stop)
+endif # java version is not Sun Oracle JDK
+endif # if requires_openjdk
 
 # Check for the correct version of javac
-javac_version := $(shell javac -version 2>&1 | head -n 1 | grep '[ "]1\.[67][\. "$$]')
 ifeq ($(strip $(javac_version)),)
 $(info ************************************************************)
 $(info You are attempting to build with the incorrect version)
 $(info of javac.)
 $(info $(space))
-$(info Your version is: $(shell javac -version 2>&1 | head -n 1).)
-$(info The correct version is: 1.6 or 1.7.)
+$(info Your version is: $(javac_version_str).)
+$(info The required version is: $(required_javac_version))
 $(info $(space))
 $(info Please follow the machine setup instructions at)
 $(info $(space)$(space)$(space)$(space)https://source.android.com/source/download.html)
 $(info ************************************************************)
 $(error stop)
 endif
+
 
 ifndef BUILD_EMULATOR
 ifeq (darwin,$(HOST_OS))
@@ -315,7 +354,7 @@ ifneq (,$(user_variant))
   # Turn on Dalvik preoptimization for user builds, but only if not
   # explicitly disabled and the build is running on Linux (since host
   # Dalvik isn't built for non-Linux hosts).
-  ifneq (true,$(DISABLE_DEXPREOPT))
+  ifeq (,$(WITH_DEXPREOPT))
     ifeq ($(user_variant),user)
       ifeq ($(HOST_OS),linux)
         WITH_DEXPREOPT := true
@@ -545,9 +584,49 @@ CUSTOM_MODULES := \
 # APPS:Quake or HOST:SHARED_LIBRARIES:libutils.
 # BUG: the system image won't know to depend on modules that are
 # brought in as requirements of other modules.
+#
+# Resolve the required module name to 32-bit or 64-bit variant.
+ifeq ($(TARGET_IS_64_BIT),true)
+# Get a list of corresponding 32-bit module names, if one exists.
+define get-32-bit-modules
+$(strip $(foreach m,$(1),\
+  $(if $(ALL_MODULES.$(m)$(TARGET_2ND_ARCH_MODULE_SUFFIX).CLASS),\
+    $(m)$(TARGET_2ND_ARCH_MODULE_SUFFIX))))
+endef
+# Get a list of corresponding 32-bit module names, if one exists;
+# otherwise return the original module name
+define get-32-bit-modules-if-we-can
+$(strip $(foreach m,$(1),\
+  $(if $(ALL_MODULES.$(m)$(TARGET_2ND_ARCH_MODULE_SUFFIX).CLASS),\
+    $(m)$(TARGET_2ND_ARCH_MODULE_SUFFIX),
+    $(m))))
+endef
+
+# If a module is built for 32-bit, the required modules must be 32-bit too;
+# Otherwise if the module is an exectuable or shared library,
+#   the required modules must be 64-bit;
+#   otherwise we require both 64-bit and 32-bit variant, if one exists.
+$(foreach m,$(ALL_MODULES),\
+  $(eval r := $(ALL_MODULES.$(m).REQUIRED))\
+  $(if $(r),\
+    $(if $(ALL_MODULES.$(m).FOR_2ND_ARCH),\
+      $(eval r_r := $(call get-32-bit-modules-if-we-can,$(r))),\
+      $(if $(filter EXECUTABLES SHARED_LIBRARIES,$(ALL_MODULES.$(m).CLASS)),\
+        $(eval r_r := $(r)),\
+        $(eval r_r := $(r) $(call get-32-bit-modules,$(r)))\
+       )\
+     )\
+     $(eval ALL_MODULES.$(m).REQUIRED := $(r_r))\
+  )\
+)
+r_r :=
+endif
+
+
 define add-required-deps
 $(1): | $(2)
 endef
+
 $(foreach m,$(ALL_MODULES), \
   $(eval r := $(ALL_MODULES.$(m).REQUIRED)) \
   $(if $(r), \
@@ -556,6 +635,8 @@ $(foreach m,$(ALL_MODULES), \
     $(eval h_m := $(filter $(HOST_OUT_ROOT)/%, $(ALL_MODULES.$(m).INSTALLED))) \
     $(eval t_r := $(filter $(TARGET_OUT_ROOT)/%, $(r))) \
     $(eval h_r := $(filter $(HOST_OUT_ROOT)/%, $(r))) \
+    $(eval t_m := $(filter-out $(t_r), $(t_m))) \
+    $(eval h_m := $(filter-out $(h_r), $(h_m))) \
     $(if $(t_m), $(eval $(call add-required-deps, $(t_m),$(t_r)))) \
     $(if $(h_m), $(eval $(call add-required-deps, $(h_m),$(h_r)))) \
    ) \
@@ -577,6 +658,14 @@ $(foreach m,$(HOST_DEPENDENCIES_ON_SHARED_LIBRARIES), \
   $(eval r := $(filter $(HOST_OUT_ROOT)/%,$(call module-installed-files,\
     $(subst $(comma),$(space),$(lastword $(p)))))) \
   $(eval $(call add-required-deps,$(word 2,$(p)),$(r))))
+ifdef TARGET_2ND_ARCH
+$(foreach m,$($(TARGET_2ND_ARCH_VAR_PREFIX)TARGET_DEPENDENCIES_ON_SHARED_LIBRARIES), \
+  $(eval p := $(subst :,$(space),$(m))) \
+  $(eval r := $(filter $(TARGET_OUT_ROOT)/%,$(call module-installed-files,\
+    $(addsuffix $(TARGET_2ND_ARCH_MODULE_SUFFIX), \
+      $(subst $(comma),$(space),$(lastword $(p))))))) \
+  $(eval $(call add-required-deps,$(word 2,$(p)),$(r))))
+endif
 
 m :=
 r :=
@@ -592,11 +681,26 @@ add-required-deps :=
 ifdef FULL_BUILD
   # The base list of modules to build for this product is specified
   # by the appropriate product definition file, which was included
-  # by product_config.make.
+  # by product_config.mk.
   product_MODULES := $(PRODUCTS.$(INTERNAL_PRODUCT).PRODUCT_PACKAGES)
   # Filter out the overridden packages before doing expansion
   product_MODULES := $(filter-out $(foreach p, $(product_MODULES), \
       $(PACKAGES.$(p).OVERRIDES)), $(product_MODULES))
+
+  # Resolve the :32 :64 module name
+  modules_32 := $(patsubst %:32,%,$(filter %:32, $(product_MODULES)))
+  modules_64 := $(patsubst %:64,%,$(filter %:64, $(product_MODULES)))
+  modules_rest := $(filter-out %:32 %:64,$(product_MODULES))
+  ifeq ($(TARGET_IS_64_BIT),true)
+    product_MODULES := $(addsuffix $(TARGET_2ND_ARCH_MODULE_SUFFIX),$(modules_32))
+    product_MODULES += $(modules_64)
+    # For the rest we add both
+    product_MODULES += $(call get-32-bit-modules, $(modules_rest))
+    product_MODULES += $(modules_rest)
+  else
+    product_MODULES := $(modules_32) $(modules_64) $(modules_rest)
+  endif
+
   $(call expand-required-modules,product_MODULES,$(product_MODULES))
   product_FILES := $(call module-installed-files, $(product_MODULES))
   ifeq (0,1)
@@ -627,12 +731,10 @@ tests_MODULES := $(sort \
 
 # TODO: Remove the 3 places in the tree that use ALL_DEFAULT_INSTALLED_MODULES
 # and get rid of it from this list.
-# TODO: The shell is chosen by magic.  Do we still need this?
 modules_to_install := $(sort \
     $(ALL_DEFAULT_INSTALLED_MODULES) \
     $(product_FILES) \
     $(foreach tag,$(tags_to_install),$($(tag)_MODULES)) \
-    $(call get-tagged-modules, shell_$(TARGET_SHELL)) \
     $(CUSTOM_MODULES) \
   )
 
@@ -664,9 +766,17 @@ ifdef is_sdk_build
 
   # Ensure every module listed in PRODUCT_PACKAGES* gets something installed
   # TODO: Should we do this for all builds and not just the sdk?
+  dangling_modules :=
   $(foreach m, $(PRODUCTS.$(INTERNAL_PRODUCT).PRODUCT_PACKAGES), \
     $(if $(strip $(ALL_MODULES.$(m).INSTALLED)),,\
-      $(error $(ALL_MODULES.$(m).MAKEFILE): Module '$(m)' in PRODUCT_PACKAGES has nothing to install!)))
+      $(eval dangling_modules += $(m))))
+  ifneq ($(TARGET_IS_64_BIT),true)
+    # We know those 64-bit modules don't exist in the 32-bit SDK build.
+    dangling_modules := $(filter-out %64,$(dangling_modules))
+  endif
+  ifneq ($(dangling_modules),)
+    $(error Module names '$(dangling_modules)' in PRODUCT_PACKAGES has nothing to install!)
+  endif
   $(foreach m, $(PRODUCTS.$(INTERNAL_PRODUCT).PRODUCT_PACKAGES_DEBUG), \
     $(if $(strip $(ALL_MODULES.$(m).INSTALLED)),,\
       $(warning $(ALL_MODULES.$(m).MAKEFILE): Module '$(m)' in PRODUCT_PACKAGES_DEBUG has nothing to install!)))
@@ -905,6 +1015,7 @@ target-native-tests : native-target-tests
 
 .PHONY: lintall
 
+ifneq (,$(filter samplecode, $(MAKECMDGOALS)))
 .PHONY: samplecode
 sample_MODULES := $(sort $(call get-tagged-modules,samples))
 sample_APKS_DEST_PATH := $(TARGET_COMMON_OUT_ROOT)/samples
@@ -918,6 +1029,7 @@ samplecode: $(sample_APKS_COLLECTION)
 	@echo -e ${CL_GRN}"Collect sample code apks:"${CL_RST}" $^"
 	# remove apks that are not intended to be installed.
 	rm -f $(sample_ADDITIONAL_INSTALLED)
+endif  # samplecode in $(MAKECMDGOALS)
 
 .PHONY: findbugs
 findbugs: $(INTERNAL_FINDBUGS_HTML_TARGET) $(INTERNAL_FINDBUGS_XML_TARGET)

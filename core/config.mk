@@ -80,7 +80,16 @@ BUILD_DROIDDOC:= $(BUILD_SYSTEM)/droiddoc.mk
 BUILD_COPY_HEADERS := $(BUILD_SYSTEM)/copy_headers.mk
 BUILD_NATIVE_TEST := $(BUILD_SYSTEM)/native_test.mk
 BUILD_HOST_NATIVE_TEST := $(BUILD_SYSTEM)/host_native_test.mk
+
+BUILD_SHARED_TEST_LIBRARY := $(BUILD_SYSTEM)/shared_test_lib.mk
+BUILD_HOST_SHARED_TEST_LIBRARY := $(BUILD_SYSTEM)/host_shared_test_lib.mk
+BUILD_STATIC_TEST_LIBRARY := $(BUILD_SYSTEM)/static_test_lib.mk
+BUILD_HOST_STATIC_TEST_LIBRARY := $(BUILD_SYSTEM)/host_static_test_lib.mk
+
 BUILD_NOTICE_FILE := $(BUILD_SYSTEM)/notice_files.mk
+BUILD_HOST_DALVIK_JAVA_LIBRARY := $(BUILD_SYSTEM)/host_dalvik_java_library.mk
+BUILD_HOST_DALVIK_STATIC_JAVA_LIBRARY := $(BUILD_SYSTEM)/host_dalvik_static_java_library.mk
+
 
 -include cts/build/config.mk
 
@@ -115,9 +124,6 @@ TARGET_ERROR_FLAGS := -Werror=return-type -Werror=non-virtual-dtor -Werror=addre
 
 # TODO: do symbol compression
 TARGET_COMPRESS_MODULE_SYMBOLS := false
-
-# Default shell is mksh. Other possible value is ash.
-TARGET_SHELL := mksh
 
 # ###############################################################
 # Include sub-configuration files
@@ -256,13 +262,60 @@ build/core/combo/include/arch/$(1)/AndroidConfig.h
 endef
 
 combo_target := HOST_
+combo_2nd_arch_prefix :=
 include $(BUILD_SYSTEM)/combo/select.mk
 
 # on windows, the tools have .exe at the end, and we depend on the
 # host config stuff being done first
 
 combo_target := TARGET_
+combo_2nd_arch_prefix :=
 include $(BUILD_SYSTEM)/combo/select.mk
+
+# Load the 2nd target arch if it's needed.
+ifdef TARGET_2ND_ARCH
+combo_target := TARGET_
+combo_2nd_arch_prefix := $(TARGET_2ND_ARCH_VAR_PREFIX)
+include $(BUILD_SYSTEM)/combo/select.mk
+endif
+
+# "ro.product.cpu.abilist" is a comma separated list of ABIs (in order
+# of preference) that the target supports. If a TARGET_CPU_ABI_LIST
+# is specified by the board configuration, we use that. If not, we
+# build a list out of the TARGET_CPU_ABIs specified by the config.
+ifeq (,$(TARGET_CPU_ABI_LIST))
+  TARGET_CPU_ABI_LIST := $(TARGET_CPU_ABI) $(TARGET_CPU_ABI2) $(TARGET_2ND_CPU_ABI) $(TARGET_2ND_CPU_ABI2)
+endif
+
+# "ro.product.cpu.abilist32" and "ro.product.cpu.abilist64" are
+# comma separated lists of the 32 and 64 bit ABIs (in order of
+# preference) that the target supports. If TARGET_CPU_ABI_LIST_{32,64}_BIT
+# are defined by the board config, we use them. Else, we construct
+# these lists based on whether TARGET_IS_64_BIT is set.
+#
+# Note that this assumes that the 2ND_CPU_ABI for a 64 bit target
+# is always 32 bits. If this isn't the case, these variables should
+# be overriden in the boarc configuration.
+ifeq (,$(TARGET_CPU_ABI_LIST_64_BIT))
+  ifeq (true,$(TARGET_IS_64_BIT))
+    TARGET_CPU_ABI_LIST_64_BIT := $(TARGET_CPU_ABI) $(TARGET_CPU_ABI2)
+  endif
+endif
+
+ifeq (,$(TARGET_CPU_ABI_LIST_32_BIT))
+  ifneq (true,$(TARGET_IS_64_BIT))
+    TARGET_CPU_ABI_LIST_32_BIT := $(TARGET_CPU_ABI) $(TARGET_CPU_ABI2)
+  else
+    # For a 64 bit target, assume that the 2ND_CPU_ABI
+    # is a 32 bit ABI.
+    TARGET_CPU_ABI_LIST_32_BIT := $(TARGET_2ND_CPU_ABI) $(TARGET_2ND_CPU_ABI2)
+  endif
+endif
+
+# Strip whitespace from the ABI list string.
+TARGET_CPU_ABI_LIST := $(subst $(space),$(comma),$(strip $(TARGET_CPU_ABI_LIST)))
+TARGET_CPU_ABI_LIST_32_BIT := $(subst $(space),$(comma),$(strip $(TARGET_CPU_ABI_LIST_32_BIT)))
+TARGET_CPU_ABI_LIST_64_BIT := $(subst $(space),$(comma),$(strip $(TARGET_CPU_ABI_LIST_64_BIT)))
 
 # Compute TARGET_TOOLCHAIN_ROOT from TARGET_TOOLS_PREFIX
 # if only TARGET_TOOLS_PREFIX is passed to the make command.
@@ -270,6 +323,37 @@ ifndef TARGET_TOOLCHAIN_ROOT
 TARGET_TOOLCHAIN_ROOT := $(patsubst %/, %, $(dir $(TARGET_TOOLS_PREFIX)))
 TARGET_TOOLCHAIN_ROOT := $(patsubst %/, %, $(dir $(TARGET_TOOLCHAIN_ROOT)))
 TARGET_TOOLCHAIN_ROOT := $(wildcard $(TARGET_TOOLCHAIN_ROOT))
+endif
+
+# Normalize WITH_STATIC_ANALYZER and WITH_SYNTAX_CHECK
+ifeq ($(strip $(WITH_STATIC_ANALYZER)),0)
+  WITH_STATIC_ANALYZER :=
+endif
+ifeq ($(strip $(WITH_SYNTAX_CHECK)),0)
+  WITH_SYNTAX_CHECK :=
+endif
+
+# Disable WITH_STATIC_ANALYZER and WITH_SYNTAX_CHECK if tool can't be found
+SYNTAX_TOOLS_PREFIX := prebuilts/misc/$(HOST_PREBUILT_TAG)/analyzer/bin
+ifneq ($(strip $(WITH_STATIC_ANALYZER)),)
+  ifeq ($(wildcard $(SYNTAX_TOOLS_PREFIX)/ccc-analyzer),)
+    $(warning *** Disable WITH_STATIC_ANALYZER because $(SYNTAX_TOOLS_PREFIX)/ccc-analyzer does not exist)
+    WITH_STATIC_ANALYZER :=
+  endif
+endif
+ifneq ($(strip $(WITH_SYNTAX_CHECK)),)
+  ifeq ($(wildcard $(SYNTAX_TOOLS_PREFIX)/ccc-syntax),)
+    $(warning *** Disable WITH_SYNTAX_CHECK because $(SYNTAX_TOOLS_PREFIX)/ccc-syntax does not exist)
+    WITH_SYNTAX_CHECK :=
+  endif
+endif
+
+# WITH_STATIC_ANALYZER trumps WITH_SYNTAX_CHECK
+ifneq ($(strip $(WITH_STATIC_ANALYZER)),)
+  ifneq ($(strip $(WITH_SYNTAX_CHECK)),)
+    $(warning *** Disable WITH_SYNTAX_CHECK in the presence of static analyzer WITH_STATIC_ANALYZER)
+    WITH_SYNTAX_CHECK :=
+  endif
 endif
 
 # Pick a Java compiler.
@@ -316,7 +400,11 @@ PROTOC := $(HOST_OUT_EXECUTABLES)/aprotoc$(HOST_EXECUTABLE_SUFFIX)
 SIGNAPK_JAR := $(HOST_OUT_JAVA_LIBRARIES)/signapk$(COMMON_JAVA_PACKAGE_SUFFIX)
 MKBOOTFS := $(HOST_OUT_EXECUTABLES)/mkbootfs$(HOST_EXECUTABLE_SUFFIX)
 MINIGZIP := $(HOST_OUT_EXECUTABLES)/minigzip$(HOST_EXECUTABLE_SUFFIX)
+ifeq (,$(strip $(BOARD_CUSTOM_MKBOOTIMG)))
 MKBOOTIMG := $(HOST_OUT_EXECUTABLES)/mkbootimg$(HOST_EXECUTABLE_SUFFIX)
+else
+MKBOOTIMG := $(BOARD_CUSTOM_MKBOOTIMG)
+endif
 MKYAFFS2 := $(HOST_OUT_EXECUTABLES)/mkyaffs2image$(HOST_EXECUTABLE_SUFFIX)
 APICHECK := $(HOST_OUT_EXECUTABLES)/apicheck$(HOST_EXECUTABLE_SUFFIX)
 MKIMAGE :=  $(HOST_OUT_EXECUTABLES)/mkimage$(HOST_EXECUTABLE_SUFFIX)
@@ -335,8 +423,6 @@ PROGUARD := external/proguard/bin/proguard.sh
 JAVATAGS := build/tools/java-event-log-tags.py
 LLVM_RS_CC := $(HOST_OUT_EXECUTABLES)/llvm-rs-cc$(HOST_EXECUTABLE_SUFFIX)
 BCC_COMPAT := $(HOST_OUT_EXECUTABLES)/bcc_compat$(HOST_EXECUTABLE_SUFFIX)
-DEXOPT := $(HOST_OUT_EXECUTABLES)/dexopt$(HOST_EXECUTABLE_SUFFIX)
-DEXPREOPT := dalvik/tools/dex-preopt
 LINT := prebuilts/sdk/tools/lint
 
 # ACP is always for the build OS, not for the host OS
@@ -359,17 +445,21 @@ endif
 
 OLD_FLEX := prebuilts/misc/$(HOST_PREBUILT_TAG)/flex/flex-2.5.4a$(HOST_EXECUTABLE_SUFFIX)
 
-ifeq ($(BUILD_OS),darwin)
-# Mac OS' screwy version of java uses a non-standard directory layout
-# and doesn't even seem to have tools.jar.  On the other hand, javac seems
-# to be able to magically find the classes in there, wherever they are, so
-# leave this blank
+ifeq ($(HOST_OS),darwin)
+ifeq ($(LEGACY_USE_JAVA6),)
+HOST_JDK_TOOLS_JAR:= $(shell $(BUILD_SYSTEM)/find-jdk-tools-jar.sh)
+else
+# Deliberately set to blank for Java 6 installations on MacOS. These
+# versions allegedly use a non-standard directory structure.
 HOST_JDK_TOOLS_JAR :=
+endif
 else
 HOST_JDK_TOOLS_JAR:= $(shell $(BUILD_SYSTEM)/find-jdk-tools-jar.sh)
+endif
+
+ifneq ($(HOST_JDK_TOOLS_JAR),)
 ifeq ($(wildcard $(HOST_JDK_TOOLS_JAR)),)
-$(error Error: could not find jdk tools.jar, please install JDK6, \
-    which you can download from java.sun.com)
+$(error Error: could not find jdk tools.jar, please check if your JDK was installed correctly)
 endif
 endif
 
@@ -446,13 +536,31 @@ HOST_GLOBAL_CPPFLAGS += $(HOST_RELEASE_CPPFLAGS)
 TARGET_GLOBAL_CFLAGS += $(TARGET_RELEASE_CFLAGS)
 TARGET_GLOBAL_CPPFLAGS += $(TARGET_RELEASE_CPPFLAGS)
 
+ifdef TARGET_2ND_ARCH
+$(TARGET_2ND_ARCH_VAR_PREFIX)TARGET_GLOBAL_CFLAGS += $(COMMON_GLOBAL_CFLAGS)
+$(TARGET_2ND_ARCH_VAR_PREFIX)TARGET_RELEASE_CFLAGS += $(COMMON_RELEASE_CFLAGS)
+$(TARGET_2ND_ARCH_VAR_PREFIX)TARGET_GLOBAL_CPPFLAGS += $(COMMON_GLOBAL_CPPFLAGS)
+$(TARGET_2ND_ARCH_VAR_PREFIX)TARGET_RELEASE_CPPFLAGS += $(COMMON_RELEASE_CPPFLAGS)
+$(TARGET_2ND_ARCH_VAR_PREFIX)TARGET_GLOBAL_LD_DIRS += -L$($(TARGET_2ND_ARCH_VAR_PREFIX)TARGET_OUT_INTERMEDIATE_LIBRARIES)
+$(TARGET_2ND_ARCH_VAR_PREFIX)TARGET_PROJECT_INCLUDES := $(TARGET_PROJECT_INCLUDES)
+$(TARGET_2ND_ARCH_VAR_PREFIX)TARGET_GLOBAL_CFLAGS += $(TARGET_ERROR_FLAGS)
+$(TARGET_2ND_ARCH_VAR_PREFIX)TARGET_GLOBAL_CPPFLAGS += $(TARGET_ERROR_FLAGS)
+$(TARGET_2ND_ARCH_VAR_PREFIX)TARGET_GLOBAL_CFLAGS += $($(TARGET_2ND_ARCH_VAR_PREFIX)TARGET_RELEASE_CFLAGS)
+$(TARGET_2ND_ARCH_VAR_PREFIX)TARGET_GLOBAL_CPPFLAGS += $($(TARGET_2ND_ARCH_VAR_PREFIX)TARGET_RELEASE_CPPFLAGS)
+endif
+
 # allow overriding default Java libraries on a per-target basis
 ifeq ($(TARGET_DEFAULT_JAVA_LIBRARIES),)
   TARGET_DEFAULT_JAVA_LIBRARIES := core core-junit ext framework framework2
 endif
 
-# define llvm tools and global flags
-include $(BUILD_SYSTEM)/llvm_config.mk
+DEX2OAT_TARGET_INSTRUCTION_SET_FEATURES := default
+ifneq (,$(filter $(TARGET_CPU_VARIANT),cortex-a7 cortex-a15 krait))
+DEX2OAT_TARGET_INSTRUCTION_SET_FEATURES := div
+endif
+
+# define clang/llvm tools and global flags
+include $(BUILD_SYSTEM)/clang/config.mk
 
 # ###############################################################
 # Collect a list of the SDK versions that we could compile against

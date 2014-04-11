@@ -195,7 +195,7 @@ renderscript_intermediate := $(intermediates)/renderscript
 
 # We don't need the .so files in bundled branches
 # Prevent these from showing up on the device
-ifneq (,$(TARGET_BUILD_APPS))
+ifneq (,$(TARGET_BUILD_APPS)$(FORCE_BUILD_RS_COMPAT))
 
 rs_compatibility_jni_libs := $(addprefix \
     $(renderscript_intermediate)/librs., \
@@ -251,6 +251,11 @@ include $(BUILD_SYSTEM)/base_rules.mk
 #######################################
 
 java_alternative_checked_module :=
+
+#######################################
+# defines built_odex along with rule to install odex
+include $(BUILD_SYSTEM)/dex_preopt_odex_install.mk
+#######################################
 
 # Make sure there's something to build.
 ifdef full_classes_jar
