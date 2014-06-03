@@ -109,7 +109,7 @@ def get_default_revision():
     m = ElementTree.parse(".repo/manifest.xml")
     d = m.findall('default')[0]
     r = d.get('revision')
-    return r.split('/')[-1]
+    return r.replace('refs/heads/', '').replace('refs/tags/', '')
 
 def get_from_manifest(devicename):
     try:
@@ -221,6 +221,9 @@ def fetch_dependencies(repo_path, fallback_branch = None):
     if len(syncable_repos) > 0:
         print('Syncing dependencies')
         os.system('repo sync %s' % ' '.join(syncable_repos))
+
+    for deprepo in syncable_repos:
+        fetch_dependencies(deprepo)
 
 def has_branch(branches, revision):
     return revision in [branch['name'] for branch in branches]

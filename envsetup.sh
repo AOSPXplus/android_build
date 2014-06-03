@@ -24,6 +24,7 @@ Invoke ". build/envsetup.sh" from your shell to add the following functions to y
 - mka:      Builds using SCHED_BATCH on all processors.
 - mkap:     Builds the module(s) using mka and pushes them to the device.
 - cmka:     Cleans and builds using mka.
+- repolastsync: Prints date and time of last repo sync.
 - reposync: Parallel repo sync using ionice and SCHED_BATCH.
 - repopick: Utility to fetch changes from Gerrit.
 - installboot: Installs a boot.img to the connected device.
@@ -630,7 +631,7 @@ function _lunch()
     COMPREPLY=( $(compgen -W "${LUNCH_MENU_CHOICES[*]}" -- ${cur}) )
     return 0
 }
-complete -F _lunch lunch
+complete -F _lunch lunch 2>/dev/null
 
 # Configures the build to build unbundled apps.
 # Run tapas with one ore more app names (from LOCAL_PACKAGE_NAME)
@@ -745,7 +746,7 @@ function gettop
             T=
             while [ \( ! \( -f $TOPFILE \) \) -a \( $PWD != "/" \) ]; do
                 \cd ..
-                T=`PWD= /bin/pwd`
+                T=`PWD= /bin/pwd -P`
             done
             \cd $HERE
             if [ -f "$T/$TOPFILE" ]; then
@@ -857,6 +858,7 @@ function mmm()
                 MAKEFILE="$MAKEFILE $MFILE"
             else
                 case $DIR in
+                  mka) MMM_MAKE=mka;;
                   showcommands | snod | dist | incrementaljavac) ARGS="$ARGS $DIR";;
                   GET-INSTALL-PATH) GET_INSTALL_PATH=$DIR;;
                   *) echo "No Android.mk in $DIR."; return 1;;
@@ -1492,7 +1494,6 @@ function cmremote()
     fi
     echo You can now push to "cmremote".
 }
-export -f cmremote
 
 function aospremote()
 {
@@ -1501,7 +1502,7 @@ function aospremote()
     then
         echo .git directory not found. Please run this from the root directory of the Android repository you wish to set up.
     fi
-    PROJECT=`pwd | sed s#$ANDROID_BUILD_TOP/##g`
+    PROJECT=`pwd -P | sed s#$ANDROID_BUILD_TOP/##g`
     if (echo $PROJECT | grep -qv "^device")
     then
         PFX="platform/"
@@ -1509,7 +1510,6 @@ function aospremote()
     git remote add aosp https://android.googlesource.com/$PFX$PROJECT
     echo "Remote 'aosp' created"
 }
-export -f aospremote
 
 function cafremote()
 {
@@ -1518,7 +1518,7 @@ function cafremote()
     then
         echo .git directory not found. Please run this from the root directory of the Android repository you wish to set up.
     fi
-    PROJECT=`pwd | sed s#$ANDROID_BUILD_TOP/##g`
+    PROJECT=`pwd -P | sed s#$ANDROID_BUILD_TOP/##g`
     if (echo $PROJECT | grep -qv "^device")
     then
         PFX="platform/"
@@ -1526,8 +1526,6 @@ function cafremote()
     git remote add caf git://codeaurora.org/$PFX$PROJECT
     echo "Remote 'caf' created"
 }
-export -f cafremote
-
 
 function installboot()
 {
@@ -1954,6 +1952,13 @@ function cmka() {
     fi
 }
 
+function repolastsync() {
+    RLSPATH="$ANDROID_BUILD_TOP/.repo/.repopickle_fetchtimes"
+    RLSLOCAL=$(date -d "$(stat -c %z $RLSPATH)" +"%e %b %Y, %T %Z")
+    RLSUTC=$(date -d "$(stat -c %z $RLSPATH)" -u +"%e %b %Y, %T %Z")
+    echo "Last repo sync: $RLSLOCAL / $RLSUTC"
+}
+
 function reposync() {
     case `uname -s` in
         Darwin)
@@ -2105,8 +2110,10 @@ if [ "x$SHELL" != "x/bin/bash" ]; then
     case `ps -o command -p $$` in
         *bash*)
             ;;
+        *zsh*)
+            ;;
         *)
-            echo "WARNING: Only bash is supported, use of other shell would lead to erroneous results"
+            echo "WARNING: Only bash and zsh are supported, use of other shell may lead to erroneous results"
             ;;
     esac
 fi

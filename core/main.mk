@@ -42,11 +42,13 @@ endif
 ifeq (,$(findstring CYGWIN,$(shell uname -sm)))
 ifeq (0,$(shell expr $$(echo $(MAKE_VERSION) | sed "s/[^0-9\.].*//") = 3.81))
 ifeq (0,$(shell expr $$(echo $(MAKE_VERSION) | sed "s/[^0-9\.].*//") = 3.82))
+ifeq (0,$(shell expr $$(echo $(MAKE_VERSION) | sed "s/[^0-9\.].*//") = 4.0))
 $(warning ********************************************************************************)
 $(warning *  You are using version $(MAKE_VERSION) of make.)
-$(warning *  Android is tested to build with versions 3.81 and 3.82.)
+$(warning *  Android is tested to build with versions 3.81, 3.82 and 4.0)
 $(warning *  see https://source.android.com/source/download.html)
 $(warning ********************************************************************************)
+endif
 endif
 endif
 endif
@@ -99,8 +101,14 @@ include $(BUILD_SYSTEM)/config.mk
 # be generated correctly
 include $(BUILD_SYSTEM)/cleanbuild.mk
 
+# Bring in Qualcomm helper macros
+include $(BUILD_SYSTEM)/qcom_utils.mk
+
 # Include the google-specific config
 -include vendor/google/build/config.mk
+
+# Include the extra device config
+-include vendor/extra/device.mk
 
 VERSION_CHECK_SEQUENCE_NUMBER := 3
 -include $(OUT_DIR)/versions_checked.mk
@@ -239,9 +247,6 @@ endif
 
 # Bring in standard build system definitions.
 include $(BUILD_SYSTEM)/definitions.mk
-
-# Bring in Qualcomm helper macros
-include $(BUILD_SYSTEM)/qcom_utils.mk
 
 # Bring in dex_preopt.mk
 include $(BUILD_SYSTEM)/dex_preopt.mk
@@ -492,7 +497,7 @@ ifneq ($(dont_bother),true)
 subdir_makefiles := \
 	$(shell build/tools/findleaves.py --prune=$(OUT_DIR) --prune=.repo --prune=.git $(subdirs) Android.mk)
 
-$(foreach mk, $(subdir_makefiles), $(info including $(mk) ...)$(eval include $(mk)))
+$(foreach mk, $(subdir_makefiles), $(eval include $(mk)))
 
 endif # dont_bother
 

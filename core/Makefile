@@ -124,13 +124,17 @@ ifeq ($(TARGET_VENDOR_DEVICE_NAME),)
 TARGET_VENDOR_DEVICE_NAME := $(TARGET_DEVICE)
 endif
 
+ifeq ($(TARGET_VENDOR_RELEASE_BUILD_ID),)
+TARGET_VENDOR_RELEASE_BUILD_ID := $(BUILD_NUMBER)
+endif
+
 # A human-readable string that descibes this build in detail.
-build_desc := $(TARGET_VENDOR_PRODUCT_NAME)-$(TARGET_BUILD_VARIANT) $(PLATFORM_VERSION) $(BUILD_ID) $(BUILD_NUMBER) $(BUILD_VERSION_TAGS)
+build_desc := $(TARGET_VENDOR_PRODUCT_NAME)-$(TARGET_BUILD_VARIANT) $(PLATFORM_VERSION) $(BUILD_ID) $(TARGET_VENDOR_RELEASE_BUILD_ID) $(BUILD_VERSION_TAGS)
 $(INSTALLED_BUILD_PROP_TARGET): PRIVATE_BUILD_DESC := $(build_desc)
 
 # The string used to uniquely identify this build;  used by the OTA server.
 ifeq (,$(strip $(BUILD_FINGERPRINT)))
-  BUILD_FINGERPRINT := $(PRODUCT_BRAND)/$(TARGET_VENDOR_PRODUCT_NAME)/$(TARGET_VENDOR_DEVICE_NAME):$(PLATFORM_VERSION)/$(BUILD_ID)/$(BUILD_NUMBER):$(TARGET_BUILD_VARIANT)/$(BUILD_VERSION_TAGS)
+  BUILD_FINGERPRINT := $(PRODUCT_BRAND)/$(TARGET_VENDOR_PRODUCT_NAME)/$(TARGET_VENDOR_DEVICE_NAME):$(PLATFORM_VERSION)/$(BUILD_ID)/$(TARGET_VENDOR_RELEASE_BUILD_ID):$(TARGET_BUILD_VARIANT)/$(BUILD_VERSION_TAGS)
 endif
 ifneq ($(words $(BUILD_FINGERPRINT)),1)
   $(error BUILD_FINGERPRINT cannot contain spaces: "$(BUILD_FINGERPRINT)")
@@ -206,6 +210,7 @@ $(INSTALLED_BUILD_PROP_TARGET): $(BUILDINFO_SH) $(INTERNAL_BUILD_ID_MAKEFILE) $(
 			TARGET_CPU_ABI="$(TARGET_CPU_ABI)" \
 			TARGET_CPU_ABI2="$(TARGET_CPU_ABI2)" \
 			TARGET_AAPT_CHARACTERISTICS="$(TARGET_AAPT_CHARACTERISTICS)" \
+			TARGET_UNIFIED_DEVICE="$(TARGET_UNIFIED_DEVICE)" \
 			$(PRODUCT_BUILD_PROP_OVERRIDES) \
 			BUILD_DISPLAY_ID="$(BUILD_DISPLAY_ID)" \
 			BUILD_NUMBER="$(BUILD_NUMBER)" \
@@ -229,7 +234,7 @@ $(INSTALLED_BUILD_PROP_TARGET): $(BUILDINFO_SH) $(INTERNAL_BUILD_ID_MAKEFILE) $(
 		        echo "#" >> $@; )
 	$(hide) $(foreach line,$(ADDITIONAL_BUILD_PROPERTIES), \
 		echo "$(line)" >> $@;)
-	$(hide) build/tools/post_process_props.py $@
+	$(hide) build/tools/post_process_props.py $@ "$(PRODUCT_PROPERTY_UBER_OVERRIDES)"
 
 build_desc :=
 
@@ -728,10 +733,12 @@ OTA_PUBLIC_KEYS := $(DEFAULT_SYSTEM_DEV_CERTIFICATE).x509.pem
 
 ifneq ($(OTA_PACKAGE_SIGNING_KEY),)
     OTA_PUBLIC_KEYS := $(OTA_PACKAGE_SIGNING_KEY).x509.pem
-    PRODUCT_EXTRA_RECOVERY_KEYS := $(DEFAULT_SYSTEM_DEV_CERTIFICATE)
+else
+    PRODUCT_EXTRA_RECOVERY_KEYS += \
+        build/target/product/security/cm \
+        build/target/product/security/cm-devkey \
+        build/target/product/security/bacon
 endif
-
-PRODUCT_EXTRA_RECOVERY_KEYS += build/target/product/security/cm
 
 # Generate a file containing the keys that will be read by the
 # recovery binary.
@@ -1287,6 +1294,9 @@ $(BUILT_TARGET_FILES_PACKAGE): \
 ifdef INSTALLED_KERNEL_TARGET
 	$(hide) $(ACP) $(INSTALLED_KERNEL_TARGET) $(zip_root)/RECOVERY/kernel
 endif
+ifdef INSTALLED_DTIMAGE_TARGET
+	$(hide) $(ACP) $(INSTALLED_DTIMAGE_TARGET) $(zip_root)/RECOVERY/dt
+endif
 ifdef INSTALLED_2NDBOOTLOADER_TARGET
 	$(hide) $(ACP) \
 		$(INSTALLED_2NDBOOTLOADER_TARGET) $(zip_root)/RECOVERY/second
@@ -1307,6 +1317,9 @@ endif
 		$(TARGET_ROOT_OUT),$(zip_root)/BOOT/RAMDISK)
 ifdef INSTALLED_KERNEL_TARGET
 	$(hide) $(ACP) $(INSTALLED_KERNEL_TARGET) $(zip_root)/BOOT/kernel
+endif
+ifdef INSTALLED_DTIMAGE_TARGET
+	$(hide) $(ACP) $(INSTALLED_DTIMAGE_TARGET) $(zip_root)/BOOT/dt
 endif
 ifdef INSTALLED_RAMDISK_TARGET
 	$(hide) $(ACP) $(INSTALLED_RAMDISK_TARGET) $(zip_root)/BOOT/ramdisk.img
@@ -1376,6 +1389,11 @@ endif
 	$(hide) echo "multistage_support=1" >> $(zip_root)/META/misc_info.txt
 	$(hide) echo "update_rename_support=1" >> $(zip_root)/META/misc_info.txt
 	$(call generate-userimage-prop-dictionary, $(zip_root)/META/misc_info.txt)
+ifdef PRODUCT_DEFAULT_DEV_CERTIFICATE
+	$(hide) build/tools/getb64key.py $(PRODUCT_DEFAULT_DEV_CERTIFICATE).x509.pem > $(zip_root)/META/releasekey.txt
+else
+	$(hide) build/tools/getb64key.py $(DEFAULT_SYSTEM_DEV_CERTIFICATE).x509.pem > $(zip_root)/META/releasekey.txt
+endif
 	@# Zip everything up, preserving symlinks
 	$(hide) (cd $(zip_root) && zip -qry ../$(notdir $@) .)
 	@# Run fs_config on all the system, boot ramdisk, and recovery ramdisk files in the zip, and save the output
@@ -1420,8 +1438,18 @@ else
     $(INTERNAL_OTA_PACKAGE_TARGET): override_device := $(TARGET_OTA_ASSERT_DEVICE)
 endif
 
+ifneq ($(TARGET_UNIFIED_DEVICE),)
+    $(INTERNAL_OTA_PACKAGE_TARGET): override_prop := --override_prop=true
+endif
+
+ifneq ($(TARGET_NO_SEPARATE_RECOVERY),)
+    $(INTERNAL_OTA_PACKAGE_TARGET): separate_recovery := --no_separate_recovery=true
+endif
+
 $(INTERNAL_OTA_PACKAGE_TARGET): $(BUILT_TARGET_FILES_PACKAGE) $(DISTTOOLS)
 	@echo "$(OTA_FROM_TARGET_SCRIPT)" > $(PRODUCT_OUT)/ota_script_path
+	@echo "$(override_device)" > $(PRODUCT_OUT)/ota_override_device
+	@echo "$(BOARD_CUSTOM_BOOTIMG_MK)" > $(PRODUCT_OUT)/ota_custom_bootimg_mk
 	@echo -e ${CL_YLW}"Package OTA:"${CL_RST}" $@"
 	MKBOOTIMG=$(BOARD_CUSTOM_BOOTIMG_MK) \
 	$(OTA_FROM_TARGET_SCRIPT) -v \
@@ -1429,6 +1457,8 @@ $(INTERNAL_OTA_PACKAGE_TARGET): $(BUILT_TARGET_FILES_PACKAGE) $(DISTTOOLS)
 	   -k $(KEY_CERT_PAIR) \
 	   --backup=$(backuptool) \
 	   --override_device=$(override_device) \
+	   $(override_prop) \
+	   $(separate_recovery) \
 	   $(BUILT_TARGET_FILES_PACKAGE) $@
 
 AX_TARGET_PACKAGE := $(PRODUCT_OUT)/ax-$(AX_VERSION).zip
